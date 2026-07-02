@@ -153,11 +153,10 @@ def load_workbook_from_bytes(file_bytes: bytes) -> Workbook:
 
     try:
 
-        workbook = load_workbook(
-            filename=BytesIO(file_bytes),
-            data_only=True,
-            read_only=True,
-        )
+   workbook = load_workbook(
+    filename=BytesIO(file_bytes),
+    data_only=True,
+)
 
         logger.info(
             "Workbook opened successfully (%d sheets)",
