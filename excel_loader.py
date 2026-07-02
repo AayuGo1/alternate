@@ -152,7 +152,11 @@ def load_workbook_from_bytes(file_bytes: bytes) -> Workbook:
         raise ExcelCorruptedError("Workbook bytes are empty.")
 
     try:
-workbook = load_workbook( filename=BytesIO(file_bytes),data_only=True,read_only=True)
+workbook = load_workbook(
+    filename=BytesIO(file_bytes),
+    data_only=True,
+    read_only=False,
+)
 
 
         logger.info(
