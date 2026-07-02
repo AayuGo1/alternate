@@ -150,17 +150,21 @@ def load_workbook_from_bytes(file_bytes: bytes) -> Workbook:
 
     if not file_bytes:
         raise ExcelCorruptedError("Workbook bytes are empty.")
+
     try:
-workbook = load_workbook(
-    filename=BytesIO(file_bytes),
-    data_only=True,
-    read_only=False,
-)
+        workbook = load_workbook(
+            filename=BytesIO(file_bytes),
+            data_only=True,
+            read_only=False,
+        )
+
         logger.info(
             "Workbook opened successfully (%d sheets)",
             len(workbook.sheetnames),
         )
+
         return workbook
+
     except Exception as exc:
         logger.exception("Workbook could not be opened.")
 
