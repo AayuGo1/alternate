@@ -1027,33 +1027,94 @@ def _render_mini_card(title: str, subtitle: str, badge_text: str, badge_class: s
 
 
 # ==========================================================
-# HEADER
+# ENTERPRISE FILTERS — dynamic, no hardcoded options
 # ==========================================================
+#
+# A filter is shown ONLY if its column actually exists in the parsed
+# DataFrame — Plant / Business Unit / Financial Year are optional
+# depending on what the workbook contains this month, while Month /
+# Category / Subcategory are effectively always present. Options for every
+# filter are read straight from the data (deduplicated, sorted — Month
+# instead follows the workbook's own chronological order). Nothing here is
+# a fixed list of values; the only thing fixed is which column NAMES are
+# eligible to become a filter.
 
-latest_month_overall = metrics.get_latest_month(df)
-total_kpis = df["Metric"].nunique()
-last_refresh = datetime.now().strftime(f"{config.DATE_FORMAT} %H:%M")
+_ENTERPRISE_FILTER_COLUMNS: list[str] = [
+    "Financial Year",
+    "Month",
+    "Plant",
+    "Business Unit",
+    "Category",
+    "Subcategory",
+]
 
-st.markdown(
-    f"""
-    <div class="enterprise-header">
-        <div>
-            <h1>{config.COMPANY_NAME}</h1>
-            <p>{config.DASHBOARD_TITLE} · {config.DASHBOARD_SUBTITLE}</p>
-        </div>
-        <div style="text-align:right;">
-            <p>Reporting Month: <strong>{latest_month_overall or "—"}</strong></p>
-            <p>Total KPIs: <strong>{total_kpis}</strong> &nbsp;|&nbsp; Last Refresh: <strong>{last_refresh}</strong></p>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+
+def _get_available_filter_options(
+    source_df: pd.DataFrame, column: str, ordered_months: list[str] | None = None
+) -> list[str]:
+    """Return the distinct, non-null values for a column, or [] if the column isn't present."""
+    if column not in source_df.columns:
+        return []
+    values = source_df[column].dropna()
+    if values.empty:
+        return []
+    unique_values = list(dict.fromkeys(str(v) for v in values))
+
+    if column == "Month" and ordered_months:
+        # Preserve the workbook's own chronological month order instead of alpha-sorting.
+        ordered_present = [m for m in ordered_months if m in unique_values]
+        remaining = [m for m in unique_values if m not in ordered_present]
+        return ordered_present + remaining
+
+    return sorted(unique_values)
+
+
+def _render_enterprise_filters(source_df: pd.DataFrame, ordered_months: list[str]) -> dict[str, list[str]]:
+    """
+    Render one multiselect per filterable column that is actually present in
+    the data, and return the user's current selections (empty list for a
+    column means "no filter applied" -> show everything for that column).
+    """
+    selections: dict[str, list[str]] = {}
+    any_filter_rendered = False
+
+    for column in _ENTERPRISE_FILTER_COLUMNS:
+        options = _get_available_filter_options(
+            source_df, column, ordered_months if column == "Month" else None
+        )
+        if not options:
+            continue
+        any_filter_rendered = True
+        selections[column] = st.multiselect(
+            column,
+            options,
+            default=[],
+            key=f"filter_{column}",
+            placeholder=f"All {column}s",
+        )
+
+    if not any_filter_rendered:
+        st.caption("No filterable dimensions detected in the current workbook.")
+
+    return selections
+
+
+def _apply_enterprise_filters(source_df: pd.DataFrame, selections: dict[str, list[str]]) -> pd.DataFrame:
+    """Intersect all active filter selections against the DataFrame."""
+    filtered = source_df
+    for column, selected_values in selections.items():
+        if selected_values:
+            filtered = filtered[filtered[column].astype(str).isin(selected_values)]
+    return filtered
 
 
 # ==========================================================
-# SIDEBAR NAVIGATION
+# SIDEBAR NAVIGATION + FILTERS
 # ==========================================================
+# Rendered before the header/pages so every downstream card, chart, table,
+# and page reflects the active filters on this same run (Streamlit reruns
+# the whole script on any widget change, so this is enough for
+# "everything reacts immediately" — no manual refresh wiring needed).
 
 with st.sidebar:
     st.markdown(f"## {config.ICONS.get('Executive', '')} {config.COMPANY_SHORT_NAME}")
@@ -1066,12 +1127,61 @@ with st.sidebar:
     selected_page = label_to_page[selected_label]
 
     st.markdown("---")
+    st.markdown("### 🔍 Filters")
+    filter_selections = _render_enterprise_filters(df, available_months)
+
+    if any(filter_selections.values()):
+        if st.button("✖️ Clear Filters", use_container_width=True):
+            for column in filter_selections:
+                st.session_state.pop(f"filter_{column}", None)
+            st.rerun()
+
+    st.markdown("---")
     st.caption(f"Source: {config.EXCEL_FILENAME}")
     if st.button("🔄 Refresh Data"):
         excel_loader.refresh_cache()
         _load_data.clear()
         st.rerun()
 
+
+# Apply filters globally: every helper/page function below reads the module-
+# level `df` / `available_months` names at call time, so reassigning them
+# here — before any card, chart, table, or page is rendered — makes the
+# entire rest of the script (Executive Overview, Energy, Water, Waste)
+# operate on the filtered data with no further changes needed anywhere else.
+df = _apply_enterprise_filters(df, filter_selections)
+available_months = [m for m in available_months if m in set(str(v) for v in df["Month"].dropna().unique())]
+
+if df.empty:
+    st.warning("No data matches the selected filters. Adjust or clear filters in the sidebar.")
+    st.stop()
+
+
+# ==========================================================
+# HEADER
+# ==========================================================
+
+latest_month_overall = metrics.get_latest_month(df)
+total_kpis = df["Metric"].nunique()
+last_refresh = datetime.now().strftime(f"{config.DATE_FORMAT} %H:%M")
+active_filter_count = sum(1 for values in filter_selections.values() if values)
+filter_caption = f"Filters active: <strong>{active_filter_count}</strong>" if active_filter_count else "No filters applied"
+
+st.markdown(
+    f"""
+    <div class="enterprise-header">
+        <div>
+            <h1>{config.COMPANY_NAME}</h1>
+            <p>{config.DASHBOARD_TITLE} · {config.DASHBOARD_SUBTITLE}</p>
+        </div>
+        <div style="text-align:right;">
+            <p>Reporting Month: <strong>{latest_month_overall or "—"}</strong></p>
+            <p>Total KPIs: <strong>{total_kpis}</strong> &nbsp;|&nbsp; Last Refresh: <strong>{last_refresh}</strong> &nbsp;|&nbsp; {filter_caption}</p>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ==========================================================
 # EXECUTIVE OVERVIEW (management dashboard)
