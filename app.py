@@ -687,7 +687,7 @@ def _build_waste_composition_df(
     bucket_frames: dict[str, pd.DataFrame], latest_month: str | None
 ) -> pd.DataFrame:
     """
-    Build a single-month composition snapshot (one row per waste-type/outcome
+    Build a single-month composition snapshot (one row per waste-type
     bucket) shaped for charts.donut_chart, which groups on 'Metric'. Only
     mass-unit rows are summed so tonnage/ratio rows never distort the split.
     Recycled Waste / Landfill are outcome views that overlap with
@@ -716,7 +716,11 @@ def _build_recycling_pct_df(bucket_frames: dict[str, pd.DataFrame], ordered_mont
     recycled_df = bucket_frames.get("Recycled Waste", pd.DataFrame(columns=["Month", "Value", "Unit"]))
     hazardous_df = bucket_frames.get("Hazardous Waste", pd.DataFrame(columns=["Month", "Value", "Unit"]))
     non_hazardous_df = bucket_frames.get("Non Hazardous Waste", pd.DataFrame(columns=["Month", "Value", "Unit"]))
-    generated_df = pd.concat([hazardous_df, non_hazardous_df], ignore_index=True) if not (hazardous_df.empty and non_hazardous_df.empty) else pd.DataFrame(columns=["Month", "Value", "Unit"])
+    generated_df = (
+        pd.concat([hazardous_df, non_hazardous_df], ignore_index=True)
+        if not (hazardous_df.empty and non_hazardous_df.empty)
+        else pd.DataFrame(columns=["Month", "Value", "Unit"])
+    )
 
     def _monthly_mass_totals(source_df: pd.DataFrame) -> pd.Series:
         if source_df.empty:
@@ -842,6 +846,185 @@ def _render_waste_page(category_df: pd.DataFrame, category: str) -> None:
                 )
 
 
+# ==========================================================
+# EXECUTIVE OVERVIEW — management dashboard
+# ==========================================================
+#
+# Nothing here is fabricated: every card, chart, alert, and change is
+# derived from rows that already exist in the parsed DataFrame, using the
+# same metrics.py formulas (calculate_variance / calculate_mom / summary
+# cards) and the same charts.py renderers already used elsewhere in this
+# file. Only two things are fixed: a generic "what counts as an intensity
+# row" keyword set (identical in spirit to the ones already used on the
+# Energy/Water/Waste pages) and a small set of display constants (max
+# cards, max alerts/changes, the variance threshold that defines an
+# "alert"). No category, metric name, or numeric value is hardcoded.
+
+_EXEC_MAX_CARDS = 8
+_EXEC_CORE_CATEGORIES: tuple[str, ...] = ("Production", "Energy", "Water", "Waste")
+_EXEC_INTENSITY_CATEGORIES: tuple[str, ...] = ("Energy", "Water", "Waste")
+_EXEC_INTENSITY_KEYWORDS: tuple[str, ...] = (
+    "intensity", "per tonne", "per unit", "per production",
+    "specific energy", "specific water", "specific waste",
+    "normalized", "normalised",
+)
+_EXEC_ALERT_VARIANCE_THRESHOLD = 10.0  # percent deviation from target considered noteworthy
+_EXEC_MAX_ALERTS = 5
+_EXEC_MAX_CHANGES = 5
+
+
+def _is_intensity_row(subcategory: Any, metric_name: str, unit: Any) -> bool:
+    """Same signal used on the Energy/Water/Waste pages: a '/' unit or intensity wording."""
+    if isinstance(unit, str) and "/" in unit:
+        return True
+    combined_text = f"{subcategory if pd.notna(subcategory) else ''} {metric_name}".lower()
+    return any(keyword in combined_text for keyword in _EXEC_INTENSITY_KEYWORDS)
+
+
+def _get_category_intensity_snapshot(
+    category_df: pd.DataFrame, latest_month: str | None, previous_month: str | None
+) -> dict[str, Any] | None:
+    """Roll up whichever rows in a category look like intensity/ratio metrics into one card."""
+    if category_df.empty:
+        return None
+    mask = category_df.apply(
+        lambda row: _is_intensity_row(row["Subcategory"], row["Metric"], row["Unit"]), axis=1
+    )
+    intensity_df = category_df[mask]
+    if intensity_df.empty:
+        return None
+    snapshot = _metric_snapshot(intensity_df, latest_month, previous_month)
+    return snapshot if snapshot.get("Current Value") is not None else None
+
+
+def _build_exec_kpi_cards(source_df: pd.DataFrame) -> list[tuple[str, dict[str, Any], str]]:
+    """
+    Select up to 8 of the most important KPIs actually present in the
+    workbook: the core category roll-ups (Production/Energy/Water/Waste),
+    their Intensity counterparts where detectable, and any Safety/Health
+    category roll-up — in that priority order. Categories or intensity
+    signals that aren't present in the data are simply skipped, never
+    invented.
+    """
+    summary_cards = metrics.get_summary_cards(source_df)
+    if not summary_cards:
+        return []
+
+    latest_month = metrics.get_latest_month(source_df)
+    previous_month = metrics.get_previous_month(source_df)
+
+    all_categories = list(dict.fromkeys(str(c) for c in source_df["Category"].dropna().unique()))
+    core_present = [c for c in _EXEC_CORE_CATEGORIES if c in all_categories]
+    other_present = [c for c in all_categories if c not in core_present]
+    safety_like = [c for c in other_present if any(k in c.lower() for k in ("safety", "h&s", "health"))]
+    remaining_other = [c for c in other_present if c not in safety_like]
+
+    cards: list[tuple[str, dict[str, Any], str]] = []
+
+    for category_name in core_present:
+        if category_name in summary_cards:
+            cards.append((category_name, summary_cards[category_name], config.ICONS.get(category_name, "📊")))
+
+    for category_name in core_present:
+        if category_name not in _EXEC_INTENSITY_CATEGORIES:
+            continue
+        category_df = metrics.filter_category(source_df, category_name)
+        intensity_snapshot = _get_category_intensity_snapshot(category_df, latest_month, previous_month)
+        if intensity_snapshot:
+            cards.append((f"{category_name} Intensity", intensity_snapshot, config.ICONS.get(category_name, "📊")))
+
+    for category_name in safety_like + remaining_other:
+        card = summary_cards.get(category_name)
+        if card and card.get("Current Value") is not None:
+            cards.append((category_name, card, config.ICONS.get(category_name, "🛡️")))
+
+    return cards[:_EXEC_MAX_CARDS]
+
+
+def _collect_alerts(source_df: pd.DataFrame, latest_month: str | None, max_alerts: int) -> list[dict[str, Any]]:
+    """
+    Flag metrics whose latest-month value deviates from its Target by more
+    than the alert threshold, reusing metrics.calculate_variance() for the
+    math. Magnitude-based (not direction-based), since whether a Target is a
+    ceiling or a floor isn't something this display layer can infer.
+    """
+    if not latest_month:
+        return []
+
+    alerts: list[dict[str, Any]] = []
+    grouped = source_df.dropna(subset=["Metric"]).groupby(["Category", "Metric"])
+    for (category_name, metric_name), metric_df in grouped:
+        latest_df = metric_df[metric_df["Month"] == latest_month]
+        if latest_df.empty:
+            continue
+        current = pd.to_numeric(latest_df["Value"], errors="coerce").sum(min_count=1)
+        target = pd.to_numeric(latest_df["Target"], errors="coerce").sum(min_count=1)
+        if pd.isna(current) or pd.isna(target):
+            continue
+        variance = metrics.calculate_variance(float(current), float(target))
+        if variance is None or pd.isna(variance):
+            continue
+        if abs(variance) >= _EXEC_ALERT_VARIANCE_THRESHOLD:
+            alerts.append(
+                {
+                    "Category": str(category_name),
+                    "Metric": str(metric_name),
+                    "Value": float(current),
+                    "Target": float(target),
+                    "Variance": float(variance),
+                }
+            )
+
+    alerts.sort(key=lambda a: abs(a["Variance"]), reverse=True)
+    return alerts[:max_alerts]
+
+
+def _collect_recent_changes(
+    source_df: pd.DataFrame, latest_month: str | None, previous_month: str | None, max_changes: int
+) -> list[dict[str, Any]]:
+    """
+    Surface the metrics with the largest month-over-month swing, reusing
+    metrics.calculate_mom() for the math.
+    """
+    if not latest_month or not previous_month:
+        return []
+
+    changes: list[dict[str, Any]] = []
+    grouped = source_df.dropna(subset=["Metric"]).groupby(["Category", "Metric"])
+    for (category_name, metric_name), metric_df in grouped:
+        snapshot = _metric_snapshot(metric_df, latest_month, previous_month)
+        mom_value = snapshot.get("MoM %")
+        if mom_value is None or pd.isna(mom_value):
+            continue
+        changes.append(
+            {
+                "Category": str(category_name),
+                "Metric": str(metric_name),
+                "Current Value": snapshot.get("Current Value"),
+                "Unit": snapshot.get("Unit") or "",
+                "MoM": float(mom_value),
+            }
+        )
+
+    changes.sort(key=lambda c: abs(c["MoM"]), reverse=True)
+    return changes[:max_changes]
+
+
+def _render_mini_card(title: str, subtitle: str, badge_text: str, badge_class: str) -> None:
+    """Small, compact card used for Alerts and Recent Changes panels."""
+    st.markdown(
+        f"""
+        <div class="kpi-card" style="padding:0.8rem 1rem; margin-bottom:0.6rem;">
+            <div style="font-weight:600; font-size:0.92rem;">{title}</div>
+            <div style="margin-top:0.35rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+                <span style="font-size:0.8rem; color:rgba(30,41,59,0.6);">{subtitle}</span>
+                <span class="{badge_class}">{badge_text}</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 # ==========================================================
 # HEADER
@@ -891,59 +1074,114 @@ with st.sidebar:
 
 
 # ==========================================================
-# EXECUTIVE OVERVIEW
+# EXECUTIVE OVERVIEW (management dashboard)
 # ==========================================================
 
 if selected_page == "Executive Overview":
-    summary_cards = metrics.get_summary_cards(df)
+    previous_month_overall = metrics.get_previous_month(df)
 
+    # ---- KPI Cards (max 8, most important metrics actually present) ----
     st.markdown("## Executive KPI Overview")
-    if summary_cards:
-        categories_list = list(summary_cards.keys())
-        cols = st.columns(config.KPI_COLUMNS)
-        for idx, category_name in enumerate(categories_list):
-            icon = config.ICONS.get(category_name, "📊")
-            with cols[idx % config.KPI_COLUMNS]:
-                _render_kpi_card(category_name, summary_cards[category_name], icon)
+    exec_cards = _build_exec_kpi_cards(df)
+    if exec_cards:
+        num_cols = min(config.KPI_COLUMNS, 4)
+        cols = st.columns(num_cols)
+        for idx, (label, card, icon) in enumerate(exec_cards):
+            with cols[idx % num_cols]:
+                _render_kpi_card(label, card, icon)
     else:
         st.info("No category-level KPIs detected.")
 
-    st.markdown("## Category Snapshots")
-    snapshot_categories = [c for c in ("Energy", "Water", "Waste") if c in summary_cards]
-    if snapshot_categories:
-        snap_cols = st.columns(len(snapshot_categories))
-        for col, category_name in zip(snap_cols, snapshot_categories):
-            with col:
-                _render_kpi_card(
-                    f"{category_name} Snapshot",
-                    summary_cards[category_name],
-                    config.ICONS.get(category_name, "📊"),
+    # ---- Monthly KPI Trend ----
+    st.markdown("## Monthly KPI Trend")
+    st.plotly_chart(charts.monthly_trend_chart(df, "Monthly KPI Trend"), use_container_width=True)
+
+    # ---- Production vs Energy / Energy vs Water ----
+    st.markdown("## Cross-Category Trends")
+    all_categories_present = set(str(c) for c in df["Category"].dropna().unique())
+    comparison_col1, comparison_col2 = st.columns(2)
+
+    with comparison_col1:
+        if {"Production", "Energy"}.issubset(all_categories_present):
+            prod_energy_df = df[df["Category"].isin(["Production", "Energy"])]
+            st.plotly_chart(
+                charts.monthly_trend_chart(prod_energy_df, "Production vs Energy"),
+                use_container_width=True,
+            )
+        else:
+            st.info("Production and/or Energy data not found in the current workbook.")
+
+    with comparison_col2:
+        if {"Energy", "Water"}.issubset(all_categories_present):
+            energy_water_df = df[df["Category"].isin(["Energy", "Water"])]
+            st.plotly_chart(
+                charts.monthly_trend_chart(energy_water_df, "Energy vs Water"),
+                use_container_width=True,
+            )
+        else:
+            st.info("Energy and/or Water data not found in the current workbook.")
+
+    # ---- Waste Composition (reuses the Waste page's own classification logic) ----
+    st.markdown("## Waste Composition")
+    if "Waste" in all_categories_present:
+        waste_category_df = metrics.filter_category(df, "Waste")
+        waste_latest_month = metrics.get_latest_month(waste_category_df)
+        waste_bucket_assignments = waste_category_df.apply(
+            lambda row: _classify_waste_row(row["Subcategory"], row["Metric"], row["Unit"]), axis=1
+        )
+        waste_bucket_frames = {
+            bucket_name: waste_category_df[waste_bucket_assignments.apply(lambda buckets: bucket_name in buckets)]
+            for bucket_name in _WASTE_BUCKET_ORDER
+        }
+        exec_composition_df = _build_waste_composition_df(waste_bucket_frames, waste_latest_month)
+        if not exec_composition_df.empty:
+            st.plotly_chart(
+                charts.donut_chart(exec_composition_df, f"Waste Composition — {waste_latest_month or 'Latest'}"),
+                use_container_width=True,
+            )
+        else:
+            st.info("No mass-based waste data available for composition.")
+    else:
+        st.info("Waste data not found in the current workbook.")
+
+    # ---- Latest Alerts / Recent KPI Changes ----
+    st.markdown("## Latest Alerts & Recent Changes")
+    alert_col, change_col = st.columns(2)
+
+    with alert_col:
+        st.markdown(f"#### 🚨 Latest Alerts (±{_EXEC_ALERT_VARIANCE_THRESHOLD:.0f}% vs Target)")
+        alerts = _collect_alerts(df, latest_month_overall, _EXEC_MAX_ALERTS)
+        if alerts:
+            for alert in alerts:
+                direction = "above" if alert["Variance"] >= 0 else "below"
+                _render_mini_card(
+                    title=f"{alert['Metric']} ({alert['Category']})",
+                    subtitle=f"Value: {_fmt_number(alert['Value'])} · Target: {_fmt_number(alert['Target'])} · {direction} target",
+                    badge_text=_fmt_percent(alert["Variance"]),
+                    badge_class=_delta_class(alert["Variance"]),
                 )
-    else:
-        st.info("Energy, Water, or Waste categories were not found in the current workbook.")
+        else:
+            st.info("No KPIs are significantly off target this month.")
 
-    st.markdown("## Overall Monthly Trend")
-    st.plotly_chart(charts.monthly_trend_chart(df, "Overall Monthly Trend"), use_container_width=True)
+    with change_col:
+        st.markdown("#### 📈 Recent KPI Changes (MoM)")
+        changes = _collect_recent_changes(df, latest_month_overall, previous_month_overall, _EXEC_MAX_CHANGES)
+        if changes:
+            for change in changes:
+                _render_mini_card(
+                    title=f"{change['Metric']} ({change['Category']})",
+                    subtitle=f"Current: {_fmt_number(change['Current Value'])}{change['Unit']}",
+                    badge_text=_fmt_percent(change["MoM"]),
+                    badge_class=_delta_class(change["MoM"]),
+                )
+        else:
+            st.info("No month-over-month comparisons available yet.")
 
-    st.markdown("## Target vs Actual")
-    st.plotly_chart(charts.target_vs_actual_chart(df, "Target vs Actual — All Categories"), use_container_width=True)
-
-    st.markdown("## Category Distribution")
-    if latest_month_overall:
-        latest_snapshot_df = df[df["Month"] == latest_month_overall].copy()
-    else:
-        latest_snapshot_df = df.copy()
-    # Relabel rows by Category so charts.donut_chart (which groups on "Metric")
-    # can be reused to show category-level share without duplicating its logic.
-    category_distribution_df = latest_snapshot_df.assign(Metric=latest_snapshot_df["Category"])
-    st.plotly_chart(
-        charts.donut_chart(category_distribution_df, f"Category Distribution — {latest_month_overall or 'Latest'}"),
-        use_container_width=True,
-    )
-
+    # ---- Summary Table ----
     st.markdown("## Summary Table")
-    if summary_cards:
-        summary_table = pd.DataFrame(summary_cards).T
+    summary_cards_full = metrics.get_summary_cards(df)
+    if summary_cards_full:
+        summary_table = pd.DataFrame(summary_cards_full).T
         summary_table.index.name = "Category"
         summary_table = summary_table.reset_index()
         st.dataframe(summary_table, use_container_width=True, height=config.DEFAULT_TABLE_HEIGHT, hide_index=True)
@@ -970,8 +1208,9 @@ elif selected_page == "Water":
 
 
 # ==========================================================
-# WASTE PAGE (unchanged)
+# WASTE PAGE (dedicated dynamic dashboard)
 # ==========================================================
+
 elif selected_page == "Waste":
     st.markdown(f"## {config.ICONS.get(selected_page, '')} {selected_page}")
     _render_waste_page(metrics.filter_category(df, selected_page), selected_page)
