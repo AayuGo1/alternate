@@ -603,6 +603,247 @@ def _render_water_page(category_df: pd.DataFrame, category: str) -> None:
 
 
 # ==========================================================
+# WASTE PAGE — dedicated dynamic dashboard
+# ==========================================================
+#
+# Waste rows are classified by inspecting each row's own Subcategory/Metric
+# text (generic domain vocabulary only — never a specific KPI name) plus its
+# Excel-parsed Unit. Unlike Energy/Water, a single row can legitimately
+# belong to MORE THAN ONE bucket at once — e.g. "Non-hazardous waste
+# recycled [kg]" is simultaneously part of the Non-Hazardous inventory AND
+# the Recycled outcome — so classification returns a list of buckets rather
+# than a single one.
+
+_WASTE_BUCKET_ORDER: list[str] = [
+    "Hazardous Waste",
+    "Non Hazardous Waste",
+    "Recycled Waste",
+    "Landfill",
+    "Waste Intensity",
+    "Other Waste Metrics",
+]
+
+_WASTE_BUCKET_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "Recycled Waste": ("recycled", "re-cycled", "reused", "re-used", "reuse", "compost"),
+    "Landfill": ("landfill",),
+    "Waste Intensity": (
+        "intensity", "per tonne", "per unit", "per production", "per t(",
+        "specific waste", "normalized", "normalised",
+    ),
+    # NOTE: "non-hazardous" must be checked before "hazardous" — "hazardous"
+    # is a substring of "non-hazardous", so hazardous-only matching would
+    # misclassify every non-hazardous row as hazardous.
+    "Non Hazardous Waste": ("non-hazardous", "non hazardous", "nonhazardous"),
+    "Hazardous Waste": ("hazardous",),
+}
+
+
+def _classify_waste_row(subcategory: Any, metric_name: str, unit: Any) -> list[str]:
+    """
+    Infer every Waste section a single row belongs to, using the row's own
+    Subcategory/Metric text plus its Excel-parsed Unit. A "/" in the Unit
+    (e.g. a per-tonnage ratio) is treated as a hard Waste Intensity signal
+    since it comes directly from the workbook. Returns a list because a row
+    can be both a waste-type row (Hazardous/Non-Hazardous) and a
+    disposal-outcome row (Recycled/Landfill) at the same time.
+    """
+    combined_text = f"{subcategory if pd.notna(subcategory) else ''} {metric_name}".lower()
+    buckets: list[str] = []
+
+    if isinstance(unit, str) and "/" in unit:
+        buckets.append("Waste Intensity")
+    elif any(keyword in combined_text for keyword in _WASTE_BUCKET_KEYWORDS["Waste Intensity"]):
+        buckets.append("Waste Intensity")
+
+    if any(keyword in combined_text for keyword in _WASTE_BUCKET_KEYWORDS["Recycled Waste"]):
+        buckets.append("Recycled Waste")
+
+    if any(keyword in combined_text for keyword in _WASTE_BUCKET_KEYWORDS["Landfill"]):
+        buckets.append("Landfill")
+
+    if any(keyword in combined_text for keyword in _WASTE_BUCKET_KEYWORDS["Non Hazardous Waste"]):
+        buckets.append("Non Hazardous Waste")
+    elif any(keyword in combined_text for keyword in _WASTE_BUCKET_KEYWORDS["Hazardous Waste"]):
+        buckets.append("Hazardous Waste")
+
+    if not buckets:
+        buckets.append("Other Waste Metrics")
+
+    return buckets
+
+
+def _is_mass_row(unit: Any) -> bool:
+    """
+    True for rows reported in a plain mass unit (e.g. 'kg', 'Kg', 'KG') as
+    opposed to a ratio/intensity unit (contains '/') or a different scale
+    (e.g. 't (metric)') — used to keep composition/recycling-rate totals
+    from mixing incompatible units. Purely a unit-text check, not a
+    hardcoded metric list.
+    """
+    return isinstance(unit, str) and "/" not in unit and "kg" in unit.lower()
+
+
+def _build_waste_composition_df(
+    bucket_frames: dict[str, pd.DataFrame], latest_month: str | None
+) -> pd.DataFrame:
+    """
+    Build a single-month composition snapshot (one row per waste-type/outcome
+    bucket) shaped for charts.donut_chart, which groups on 'Metric'. Only
+    mass-unit rows are summed so tonnage/ratio rows never distort the split.
+    Recycled Waste / Landfill are outcome views that overlap with
+    Hazardous/Non-Hazardous, so composition is shown only across the two
+    mutually-exclusive waste-type buckets.
+    """
+    records: list[dict[str, Any]] = []
+    for bucket_name in ("Hazardous Waste", "Non Hazardous Waste"):
+        bucket_df = bucket_frames.get(bucket_name)
+        if bucket_df is None or bucket_df.empty or not latest_month:
+            continue
+        month_df = bucket_df[(bucket_df["Month"] == latest_month) & (bucket_df["Unit"].apply(_is_mass_row))]
+        total = pd.to_numeric(month_df["Value"], errors="coerce").sum(min_count=1)
+        if pd.notna(total):
+            records.append({"Metric": bucket_name, "Month": latest_month, "Value": float(total), "Unit": "kg", "Target": None})
+
+    return pd.DataFrame(records, columns=["Metric", "Month", "Value", "Unit", "Target"])
+
+
+def _build_recycling_pct_df(bucket_frames: dict[str, pd.DataFrame], ordered_months: list[str]) -> pd.DataFrame:
+    """
+    Build a Recycling % series: recycled mass / total generated mass
+    (Hazardous + Non-Hazardous mass rows) for each month present. Shaped for
+    charts.bar_chart / line_chart re-use.
+    """
+    recycled_df = bucket_frames.get("Recycled Waste", pd.DataFrame(columns=["Month", "Value", "Unit"]))
+    hazardous_df = bucket_frames.get("Hazardous Waste", pd.DataFrame(columns=["Month", "Value", "Unit"]))
+    non_hazardous_df = bucket_frames.get("Non Hazardous Waste", pd.DataFrame(columns=["Month", "Value", "Unit"]))
+    generated_df = pd.concat([hazardous_df, non_hazardous_df], ignore_index=True) if not (hazardous_df.empty and non_hazardous_df.empty) else pd.DataFrame(columns=["Month", "Value", "Unit"])
+
+    def _monthly_mass_totals(source_df: pd.DataFrame) -> pd.Series:
+        if source_df.empty:
+            return pd.Series(dtype=float)
+        mass_df = source_df[source_df["Unit"].apply(_is_mass_row)]
+        if mass_df.empty:
+            return pd.Series(dtype=float)
+        return mass_df.groupby("Month")["Value"].apply(lambda s: pd.to_numeric(s, errors="coerce").sum(min_count=1))
+
+    recycled_totals = _monthly_mass_totals(recycled_df)
+    generated_totals = _monthly_mass_totals(generated_df)
+
+    records: list[dict[str, Any]] = []
+    for month_label in ordered_months:
+        recycled_value = recycled_totals.get(month_label)
+        generated_value = generated_totals.get(month_label)
+        pct_value = None
+        if pd.notna(recycled_value) and pd.notna(generated_value) and generated_value:
+            pct_value = float(recycled_value) / float(generated_value) * 100.0
+        if pct_value is not None:
+            records.append({"Metric": "Recycling Rate", "Month": month_label, "Value": pct_value, "Unit": "%", "Target": None})
+
+    return pd.DataFrame(records, columns=["Metric", "Month", "Value", "Unit", "Target"])
+
+
+def _render_waste_page(category_df: pd.DataFrame, category: str) -> None:
+    """Render the dedicated, dynamically-grouped Waste dashboard."""
+    if category_df.empty:
+        st.info(f"No data found for {category} in the current workbook.")
+        return
+
+    bucket_assignments = category_df.apply(
+        lambda row: _classify_waste_row(row["Subcategory"], row["Metric"], row["Unit"]), axis=1
+    )
+
+    bucket_frames: dict[str, pd.DataFrame] = {}
+    for bucket_name in _WASTE_BUCKET_ORDER:
+        mask = bucket_assignments.apply(lambda buckets: bucket_name in buckets)
+        bucket_frames[bucket_name] = category_df[mask]
+
+    latest_month = metrics.get_latest_month(category_df)
+    previous_month = metrics.get_previous_month(category_df)
+
+    # Overall Waste snapshot, reusing metrics.get_summary_cards() as-is.
+    overall_summary = metrics.get_summary_cards(category_df)
+    if overall_summary:
+        _, overall_card = next(iter(overall_summary.items()))
+        st.markdown("#### Overall Waste Snapshot")
+        _render_kpi_card(f"{category} — All Streams Combined", overall_card, config.ICONS.get(category, ""))
+
+    # Page-level charts: Waste Composition Donut + Recycling %.
+    st.markdown("#### Waste Composition & Recycling")
+    composition_df = _build_waste_composition_df(bucket_frames, latest_month)
+    recycling_df = _build_recycling_pct_df(bucket_frames, available_months)
+
+    comp_col, rec_col = st.columns(2)
+    with comp_col:
+        if not composition_df.empty:
+            st.plotly_chart(
+                charts.donut_chart(composition_df, f"Waste Composition — {latest_month or 'Latest'}"),
+                use_container_width=True,
+            )
+        else:
+            st.info("No mass-based waste data available for composition.")
+    with rec_col:
+        if not recycling_df.empty:
+            st.plotly_chart(
+                charts.bar_chart(recycling_df, "Recycling % — Monthly Trend"),
+                use_container_width=True,
+            )
+        else:
+            st.info("No recycling-rate data could be computed from the current workbook.")
+
+    active_buckets = [name for name in _WASTE_BUCKET_ORDER if not bucket_frames.get(name, pd.DataFrame()).empty]
+    if not active_buckets:
+        st.info("No Waste metrics could be detected in the current workbook.")
+        return
+
+    tabs = st.tabs(active_buckets)
+    for tab, bucket_name in zip(tabs, active_buckets):
+        with tab:
+            bucket_df = bucket_frames[bucket_name]
+            bucket_metrics = list(dict.fromkeys(str(m) for m in bucket_df["Metric"].tolist() if pd.notna(m)))
+
+            metric_word = "metric" if len(bucket_metrics) == 1 else "metrics"
+            st.markdown(f"##### {bucket_name} · {len(bucket_metrics)} {metric_word}")
+
+            # One KPI card per discovered metric in this section.
+            cols = st.columns(min(config.KPI_COLUMNS, max(len(bucket_metrics), 1)))
+            for idx, metric_name in enumerate(bucket_metrics):
+                metric_df = bucket_df[bucket_df["Metric"] == metric_name]
+                snapshot = _metric_snapshot(metric_df, latest_month, previous_month)
+                with cols[idx % len(cols)]:
+                    _render_kpi_card(metric_name, snapshot, "🗑️")
+
+            chart_col1, chart_col2 = st.columns(2)
+            with chart_col1:
+                st.plotly_chart(
+                    charts.line_chart(bucket_df, f"{bucket_name} — Monthly Trend"),
+                    use_container_width=True,
+                )
+            with chart_col2:
+                st.plotly_chart(
+                    charts.target_vs_actual_chart(bucket_df, f"{bucket_name} — Target vs Actual"),
+                    use_container_width=True,
+                )
+
+            with st.expander(f"📋 {bucket_name} — Data Table", expanded=False):
+                search_term = st.text_input(
+                    "Search metric",
+                    key=f"waste_search_{bucket_name}",
+                    placeholder="Filter by metric name...",
+                )
+                table_df = bucket_df[["Metric", "Month", "Value", "Unit", "Target"]].copy()
+                table_df["_MonthSort"] = _month_sort_categorical(table_df["Month"], available_months)
+                table_df = table_df.sort_values(["Metric", "_MonthSort"]).drop(columns="_MonthSort")
+
+                if search_term:
+                    table_df = table_df[table_df["Metric"].str.contains(search_term, case=False, na=False)]
+
+                st.dataframe(
+                    table_df, use_container_width=True, height=config.DEFAULT_TABLE_HEIGHT, hide_index=True
+                )
+
+
+
+# ==========================================================
 # HEADER
 # ==========================================================
 
@@ -731,10 +972,9 @@ elif selected_page == "Water":
 # ==========================================================
 # WASTE PAGE (unchanged)
 # ==========================================================
-
 elif selected_page == "Waste":
     st.markdown(f"## {config.ICONS.get(selected_page, '')} {selected_page}")
-    _render_category_page(selected_page)
+    _render_waste_page(metrics.filter_category(df, selected_page), selected_page)
 
 
 # ==========================================================
