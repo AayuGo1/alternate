@@ -1086,6 +1086,50 @@ with st.sidebar:
         label_visibility="collapsed",
     )
 
+    # ---- Category Filter (dynamic, driven entirely by the parsed workbook) ----
+    st.markdown("#### 🗂️ Category Filter")
+    _category_options = ["All Categories"] + list(
+        dict.fromkeys(str(c) for c in df["Category"].dropna().tolist())
+    )
+
+    if "selected_category_filter" not in st.session_state:
+        st.session_state["selected_category_filter"] = "All Categories"
+    elif st.session_state["selected_category_filter"] not in _category_options:
+        # Workbook may have changed (refresh) — fall back gracefully.
+        st.session_state["selected_category_filter"] = "All Categories"
+
+    st.selectbox(
+        "Category",
+        options=_category_options,
+        key="selected_category_filter",
+        label_visibility="collapsed",
+    )
+
+    # ---- Subcategory Filter (dynamic, cascades from the selected Category) ----
+    st.markdown("#### 🏷️ Subcategory Filter")
+    _selected_category_for_subcat = st.session_state["selected_category_filter"]
+    _subcategory_source_df = (
+        df if _selected_category_for_subcat == "All Categories"
+        else df[df["Category"] == _selected_category_for_subcat]
+    )
+    _subcategory_options = ["All Subcategories"] + list(
+        dict.fromkeys(str(s) for s in _subcategory_source_df["Subcategory"].dropna().tolist())
+    )
+
+    if "selected_subcategory_filter" not in st.session_state:
+        st.session_state["selected_subcategory_filter"] = "All Subcategories"
+    elif st.session_state["selected_subcategory_filter"] not in _subcategory_options:
+        # Selected Category changed (or workbook changed) and the previous
+        # Subcategory no longer applies — reset gracefully rather than error.
+        st.session_state["selected_subcategory_filter"] = "All Subcategories"
+
+    st.selectbox(
+        "Subcategory",
+        options=_subcategory_options,
+        key="selected_subcategory_filter",
+        label_visibility="collapsed",
+    )
+
     st.markdown("---")
     st.caption(f"Source: {config.EXCEL_FILENAME}")
     if st.button("🔄 Refresh Data"):
@@ -1095,15 +1139,27 @@ with st.sidebar:
 
 
 # ==========================================================
-# APPLY MONTH FILTER (global — feeds every page, chart, and table)
+# APPLY FILTERS (global — feeds every page, chart, and table)
+# Order: Month -> Category -> Subcategory, exactly as selected in the
+# sidebar. Each stage narrows the same DataFrame that every page,
+# chart, and table below reads from, so all three filters always work
+# together.
 # ==========================================================
 
 _selected_month = st.session_state.get("selected_month_filter", "All Months")
 if _selected_month != "All Months":
     df = df[df["Month"] == _selected_month]
 
+_selected_category = st.session_state.get("selected_category_filter", "All Categories")
+if _selected_category != "All Categories":
+    df = df[df["Category"] == _selected_category]
+
+_selected_subcategory = st.session_state.get("selected_subcategory_filter", "All Subcategories")
+if _selected_subcategory != "All Subcategories":
+    df = df[df["Subcategory"] == _selected_subcategory]
+
 if df.empty:
-    st.warning(f"No KPI data found for {_selected_month}.")
+    st.warning("No KPI data matches the current filter selection.")
     st.stop()
 
 
