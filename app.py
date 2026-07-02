@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import plotly.io as pio
@@ -1169,7 +1170,7 @@ if df.empty:
 
 latest_month_overall = metrics.get_latest_month(df)
 total_kpis = df["Metric"].nunique()
-last_refresh = datetime.now().strftime(f"{config.DATE_FORMAT} %H:%M")
+last_refresh = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y | %I:%M %p IST")
 
 st.markdown(
     f"""
