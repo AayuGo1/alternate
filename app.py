@@ -444,6 +444,165 @@ def _render_energy_page(category_df: pd.DataFrame, category: str) -> None:
 
 
 # ==========================================================
+# WATER PAGE — dedicated dynamic dashboard
+# ==========================================================
+#
+# Same philosophy as the Energy page: nothing about Water sections or
+# metrics is hardcoded. Each row is classified into a section by
+# inspecting its Subcategory/Metric text for keywords, with one extra
+# signal unique to Water: if the row's own Excel-parsed Unit contains a
+# "/" (e.g. "m³/Gross Weight (t Metric)"), that row is a per-production
+# ratio and is treated as Water Intensity regardless of its metric name —
+# so a metric like "Total water withdrawal" that is reported both as an
+# absolute m³ figure and as an intensity ratio automatically lands in
+# both the Withdrawal section (for the m³ rows) and the Intensity section
+# (for the ratio rows), using the units exactly as they appear in Excel.
+
+_WATER_BUCKET_ORDER: list[str] = [
+    "Water Withdrawal",
+    "Water Consumption",
+    "Water Recycled",
+    "Water KPI",
+    "Water Intensity",
+    "Other Water Metrics",
+]
+
+_WATER_BUCKET_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "Water Recycled": ("recycled", "re-cycled", "reused", "re-used", "reuse"),
+    "Water Intensity": (
+        "intensity", "per tonne", "per unit", "per production",
+        "specific water", "normalized", "normalised",
+    ),
+    "Water KPI": ("kpi",),
+    # Discharge / effluent text is checked separately (see _WATER_DISCHARGE_KEYWORDS
+    # below) so it is never swept into Withdrawal just because it also mentions
+    # "municipal" or "surface water" as the receiving point rather than the source.
+    "Water Withdrawal": (
+        "withdrawal", "abstract", "municipal", "public supply", "public / municipal",
+        "surface water", "ground water", "groundwater", "tanker", "borewell",
+        "bore well", "river", "lake", "lagoon",
+    ),
+    "Water Consumption": ("consumption", "consumed"),
+}
+
+_WATER_DISCHARGE_KEYWORDS: tuple[str, ...] = ("discharge", "discharged", "wastewater", "effluent", "sewer")
+
+
+def _classify_water_row(subcategory: Any, metric_name: str, unit: Any) -> str:
+    """
+    Infer which Water section a single row belongs to, using the row's own
+    Subcategory/Metric text plus its Excel-parsed Unit. A "/" in the Unit
+    (e.g. a per-tonnage ratio) is treated as a hard Water Intensity signal
+    since it comes directly from the workbook rather than being inferred
+    from wording. Discharge/effluent rows are routed to Other Water Metrics
+    rather than Withdrawal, since mentioning "municipal" or "surface water"
+    as the *destination* of discharged water is not the same as withdrawing
+    from that source.
+    """
+    if isinstance(unit, str) and "/" in unit:
+        return "Water Intensity"
+
+    combined_text = f"{subcategory if pd.notna(subcategory) else ''} {metric_name}".lower()
+
+    for bucket_name in ("Water Recycled", "Water Intensity", "Water KPI"):
+        if any(keyword in combined_text for keyword in _WATER_BUCKET_KEYWORDS[bucket_name]):
+            return bucket_name
+
+    if any(keyword in combined_text for keyword in _WATER_DISCHARGE_KEYWORDS):
+        return "Other Water Metrics"
+
+    for bucket_name in ("Water Withdrawal", "Water Consumption"):
+        if any(keyword in combined_text for keyword in _WATER_BUCKET_KEYWORDS[bucket_name]):
+            return bucket_name
+
+    return "Other Water Metrics"
+
+
+def _render_water_page(category_df: pd.DataFrame, category: str) -> None:
+    """Render the dedicated, dynamically-grouped Water dashboard."""
+    if category_df.empty:
+        st.info(f"No data found for {category} in the current workbook.")
+        return
+
+    bucket_series = category_df.apply(
+        lambda row: _classify_water_row(row["Subcategory"], row["Metric"], row["Unit"]), axis=1
+    )
+    classified_df = category_df.assign(_Bucket=bucket_series)
+
+    latest_month = metrics.get_latest_month(category_df)
+    previous_month = metrics.get_previous_month(category_df)
+
+    # Overall Water snapshot, reusing metrics.get_summary_cards() as-is.
+    overall_summary = metrics.get_summary_cards(category_df)
+    if overall_summary:
+        _, overall_card = next(iter(overall_summary.items()))
+        st.markdown("#### Overall Water Snapshot")
+        _render_kpi_card(f"{category} — All Sources Combined", overall_card, config.ICONS.get(category, ""))
+
+    active_buckets = [
+        name for name in _WATER_BUCKET_ORDER if not classified_df[classified_df["_Bucket"] == name].empty
+    ]
+    if not active_buckets:
+        st.info("No Water metrics could be detected in the current workbook.")
+        return
+
+    tabs = st.tabs(active_buckets)
+    for tab, bucket_name in zip(tabs, active_buckets):
+        with tab:
+            bucket_df = classified_df[classified_df["_Bucket"] == bucket_name].drop(columns="_Bucket")
+            bucket_metrics = list(dict.fromkeys(str(m) for m in bucket_df["Metric"].tolist() if pd.notna(m)))
+
+            metric_word = "metric" if len(bucket_metrics) == 1 else "metrics"
+            st.markdown(f"##### {bucket_name} · {len(bucket_metrics)} {metric_word}")
+
+            # One KPI card per discovered metric in this section (Excel units shown as-is).
+            cols = st.columns(min(config.KPI_COLUMNS, max(len(bucket_metrics), 1)))
+            for idx, metric_name in enumerate(bucket_metrics):
+                metric_df = bucket_df[bucket_df["Metric"] == metric_name]
+                snapshot = _metric_snapshot(metric_df, latest_month, previous_month)
+                with cols[idx % len(cols)]:
+                    _render_kpi_card(metric_name, snapshot, "💧")
+
+            trend_title = f"{bucket_name} Trend" if bucket_name != "Water Intensity" else "Water Intensity Trend"
+            chart_col1, chart_col2 = st.columns(2)
+            with chart_col1:
+                st.plotly_chart(
+                    charts.line_chart(bucket_df, trend_title),
+                    use_container_width=True,
+                )
+            with chart_col2:
+                st.plotly_chart(
+                    charts.target_vs_actual_chart(bucket_df, f"{bucket_name} — Target vs Actual"),
+                    use_container_width=True,
+                )
+
+            # Water Source Distribution — only meaningful (and only shown) where
+            # more than one distinct withdrawal source is actually reported.
+            if bucket_name == "Water Withdrawal" and len(bucket_metrics) > 1:
+                st.plotly_chart(
+                    charts.donut_chart(bucket_df, "Water Source Distribution"),
+                    use_container_width=True,
+                )
+
+            with st.expander(f"📋 {bucket_name} — Data Table", expanded=False):
+                search_term = st.text_input(
+                    "Search metric",
+                    key=f"water_search_{bucket_name}",
+                    placeholder="Filter by metric name...",
+                )
+                table_df = bucket_df[["Metric", "Month", "Value", "Unit", "Target"]].copy()
+                table_df["_MonthSort"] = _month_sort_categorical(table_df["Month"], available_months)
+                table_df = table_df.sort_values(["Metric", "_MonthSort"]).drop(columns="_MonthSort")
+
+                if search_term:
+                    table_df = table_df[table_df["Metric"].str.contains(search_term, case=False, na=False)]
+
+                st.dataframe(
+                    table_df, use_container_width=True, height=config.DEFAULT_TABLE_HEIGHT, hide_index=True
+                )
+
+
+# ==========================================================
 # HEADER
 # ==========================================================
 
@@ -561,10 +720,19 @@ elif selected_page == "Energy":
 
 
 # ==========================================================
-# WATER / WASTE PAGES (unchanged)
+# WATER PAGE (dedicated dynamic dashboard)
 # ==========================================================
 
-elif selected_page in ("Water", "Waste"):
+elif selected_page == "Water":
+    st.markdown(f"## {config.ICONS.get(selected_page, '')} {selected_page}")
+    _render_water_page(metrics.filter_category(df, selected_page), selected_page)
+
+
+# ==========================================================
+# WASTE PAGE (unchanged)
+# ==========================================================
+
+elif selected_page == "Waste":
     st.markdown(f"## {config.ICONS.get(selected_page, '')} {selected_page}")
     _render_category_page(selected_page)
 
