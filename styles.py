@@ -1,495 +1,405 @@
-
 """
 styles.py
-Enterprise CSS for the Jubilant FoodWorks Limited
-Enterprise Sustainability Analytics Dashboard.
-
-Design direction: modern, minimal, premium — inspired by Microsoft Power BI.
-Large KPI cards, rounded corners, soft shadows, gradient header, sticky top
-navigation, and subtle hover-lift micro-interactions.
-
-Contains ONLY CSS (as a Python string). No Streamlit calls, no HTML markup.
-Colors and design tokens are sourced from config.py so the whole dashboard
-stays visually consistent from a single source of truth.
+Enterprise-grade visual theme for the Sustainability Analytics Dashboard.
+Pure presentation only — no data, no business logic.
 """
-
-from __future__ import annotations
-
-import config
 
 
 def load_css() -> str:
-    """Return the complete enterprise CSS stylesheet as a raw string."""
-    theme = config.THEME
-
-    return f"""
-/* =====================================================================
+    return """
+/* ============================================================
    DESIGN TOKENS
-   ===================================================================== */
-:root {{
-    --primary: {theme.PRIMARY_COLOR};
-    --secondary: {theme.SECONDARY_COLOR};
-    --success: {theme.SUCCESS_COLOR};
-    --warning: {theme.WARNING_COLOR};
-    --danger: {theme.DANGER_COLOR};
-    --background: {theme.BACKGROUND_COLOR};
-    --card: {theme.CARD_COLOR};
-    --text: {theme.TEXT_COLOR};
-    --sidebar: {theme.SIDEBAR_COLOR};
-    --radius: {theme.BORDER_RADIUS};
-    --shadow: {theme.CARD_SHADOW};
-    --shadow-hover: 0 12px 28px rgba(15, 23, 42, 0.16);
-    --font-family: "Segoe UI", "Segoe UI Semibold", -apple-system,
-        BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-    --transition-fast: 180ms cubic-bezier(0.4, 0, 0.2, 1);
-    --transition-medium: 320ms cubic-bezier(0.4, 0, 0.2, 1);
-}}
+   ============================================================ */
+:root {
+    --jfw-navy:        #0B2545;
+    --jfw-blue-deep:   #0E4B8C;
+    --jfw-blue:        #1565D8;
+    --jfw-blue-light:  #4C9AFF;
+    --jfw-green-deep:  #0F7A5C;
+    --jfw-green:       #16A876;
+    --jfw-green-light: #4FD1A5;
+    --jfw-bg:          #F4F7FB;
+    --jfw-surface:     #FFFFFF;
+    --jfw-border:      rgba(15, 35, 64, 0.08);
+    --jfw-text:        #14213D;
+    --jfw-text-muted:  rgba(20, 33, 61, 0.58);
+    --jfw-positive:    #0F9D6B;
+    --jfw-negative:    #E14F4F;
+    --jfw-radius-lg:   18px;
+    --jfw-radius-md:   14px;
+    --jfw-radius-sm:   10px;
+    --jfw-shadow-sm:   0 1px 3px rgba(15, 35, 64, 0.06), 0 1px 2px rgba(15, 35, 64, 0.04);
+    --jfw-shadow-md:   0 6px 20px rgba(15, 35, 64, 0.08), 0 2px 6px rgba(15, 35, 64, 0.04);
+    --jfw-shadow-lg:   0 16px 40px rgba(15, 35, 64, 0.14), 0 4px 12px rgba(15, 35, 64, 0.06);
+    --jfw-font: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+}
 
-/* =====================================================================
-   ENTIRE PAGE
-   ===================================================================== */
-html, body, [data-testid="stAppViewContainer"] {{
-    background: var(--background) !important;
-    color: var(--text);
-    font-family: var(--font-family);
-    font-size: 16px;
-    line-height: 1.55;
-    letter-spacing: 0.1px;
-}}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-[data-testid="stAppViewContainer"] > .main {{
-    padding: 0 2.5rem 3rem 2.5rem;
-}}
+/* ============================================================
+   GLOBAL / LAYOUT
+   ============================================================ */
+html, body, [class*="css"] {
+    font-family: var(--jfw-font) !important;
+    color: var(--jfw-text);
+}
 
-.block-container {{
-    max-width: 100% !important;
-    padding-top: 1.25rem !important;
-    padding-bottom: 2rem !important;
-}}
+.stApp {
+    background: linear-gradient(180deg, #EEF3FA 0%, #F4F7FB 220px, #F4F7FB 100%);
+}
 
-* {{
-    box-sizing: border-box;
-}}
+.block-container {
+    padding-top: 1.4rem !important;
+    padding-bottom: 3rem !important;
+    max-width: 1600px !important;
+}
 
-::selection {{
-    background: var(--primary);
-    color: #ffffff;
-}}
+h1, h2, h3, h4, h5 {
+    font-family: var(--jfw-font) !important;
+    color: var(--jfw-navy) !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.01em;
+}
 
-::-webkit-scrollbar {{
-    width: 10px;
-    height: 10px;
-}}
+h2 { margin-top: 2.2rem !important; margin-bottom: 1rem !important; font-size: 1.35rem !important; }
+h3 { font-size: 1.12rem !important; }
+h4, h5 { color: var(--jfw-blue-deep) !important; }
 
-::-webkit-scrollbar-track {{
-    background: transparent;
-}}
+hr {
+    border: none !important;
+    border-top: 1px solid var(--jfw-border) !important;
+    margin: 1.8rem 0 !important;
+}
 
-::-webkit-scrollbar-thumb {{
-    background: rgba(15, 23, 42, 0.18);
-    border-radius: 10px;
-}}
+/* Scrollbar polish */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: rgba(15, 35, 64, 0.18);
+    border-radius: 20px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(15, 35, 64, 0.3); background-clip: content-box; }
 
-::-webkit-scrollbar-thumb:hover {{
-    background: rgba(15, 23, 42, 0.32);
-}}
-
-/* =====================================================================
-   STICKY GRADIENT HEADER / TOP NAVIGATION
-   ===================================================================== */
-[data-testid="stHeader"] {{
-    position: sticky;
-    top: 0;
-    z-index: 999;
-    height: auto;
-    background: linear-gradient(120deg, var(--secondary) 0%, var(--primary) 100%);
-    box-shadow: 0 4px 18px rgba(15, 23, 42, 0.22);
-    backdrop-filter: blur(6px);
-}}
-
-.enterprise-header {{
-    position: sticky;
-    top: 0;
-    z-index: 998;
+/* ============================================================
+   HEADER
+   ============================================================ */
+.enterprise-header {
     display: flex;
-    align-items: center;
     justify-content: space-between;
-    padding: 1.5rem 2.5rem;
-    margin: 0 -2.5rem 1.75rem -2.5rem;
-    background: linear-gradient(120deg, var(--secondary) 0%, var(--primary) 100%);
-    color: #ffffff;
-    border-radius: 0 0 var(--radius) var(--radius);
-    box-shadow: var(--shadow);
-}}
-
-.enterprise-header h1 {{
-    color: #ffffff !important;
-    font-size: 1.9rem;
-    font-weight: 700;
-    margin: 0;
-    letter-spacing: 0.2px;
-}}
-
-.enterprise-header p {{
-    color: rgba(255, 255, 255, 0.82) !important;
-    font-size: 0.95rem;
-    margin: 0.2rem 0 0 0;
-}}
-
-/* =====================================================================
-   HEADINGS / SUBHEADER
-   ===================================================================== */
-h1, h2, h3, h4, h5, h6 {{
-    color: var(--text) !important;
-    font-family: var(--font-family);
-    font-weight: 700;
-    letter-spacing: 0.1px;
-}}
-
-h1 {{
-    font-size: 2.1rem;
-    margin-bottom: 0.4rem;
-}}
-
-h2 {{
-    font-size: 1.5rem;
-    margin-top: 1.6rem;
-    margin-bottom: 0.6rem;
-    padding-bottom: 0.4rem;
-    border-bottom: 2px solid rgba(15, 23, 42, 0.08);
-}}
-
-h3 {{
-    font-size: 1.15rem;
-    color: var(--secondary) !important;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    font-weight: 600;
-    margin-top: 1.2rem;
-}}
-
-/* =====================================================================
-   SIDEBAR
-   ===================================================================== */
-[data-testid="stSidebar"] {{
-    background: linear-gradient(180deg, var(--sidebar) 0%, #16213a 100%);
-    border-right: 1px solid rgba(255, 255, 255, 0.06);
-}}
-
-[data-testid="stSidebar"] * {{
-    color: rgba(255, 255, 255, 0.92) !important;
-}}
-
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h1,
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h2,
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3 {{
-    color: #ffffff !important;
-    border-bottom: none;
-}}
-
-[data-testid="stSidebar"] .stRadio label,
-[data-testid="stSidebar"] .stSelectbox label {{
-    font-weight: 500;
-    opacity: 0.9;
-}}
-
-[data-testid="stSidebar"] hr {{
-    border-color: rgba(255, 255, 255, 0.12);
-}}
-
-/* =====================================================================
-   KPI CARDS / METRIC CARDS
-   ===================================================================== */
-.kpi-card,
-[data-testid="stMetric"] {{
-    background: var(--card);
-    border-radius: var(--radius);
-    padding: 1.6rem 1.75rem;
-    box-shadow: var(--shadow);
-    border: 1px solid rgba(15, 23, 42, 0.05);
-    transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+    background: linear-gradient(120deg, var(--jfw-navy) 0%, var(--jfw-blue-deep) 55%, var(--jfw-green-deep) 130%);
+    color: #fff;
+    padding: 1.6rem 2.2rem;
+    border-radius: var(--jfw-radius-lg);
+    box-shadow: var(--jfw-shadow-lg);
+    margin-bottom: 1.8rem;
     position: relative;
     overflow: hidden;
-}}
+}
 
-.kpi-card::before {{
+.enterprise-header::after {
     content: "";
     position: absolute;
-    top: 0;
-    left: 0;
-    width: 5px;
+    inset: 0;
+    background:
+        radial-gradient(circle at 85% -10%, rgba(79, 209, 165, 0.35), transparent 55%),
+        radial-gradient(circle at 10% 120%, rgba(76, 154, 255, 0.25), transparent 50%);
+    pointer-events: none;
+}
+
+.enterprise-header h1 {
+    color: #fff !important;
+    font-size: 1.55rem !important;
+    font-weight: 800 !important;
+    margin: 0 !important;
+    letter-spacing: -0.02em;
+}
+
+.enterprise-header p {
+    color: rgba(255, 255, 255, 0.82) !important;
+    margin: 0.15rem 0 !important;
+    font-size: 0.88rem;
+}
+
+.enterprise-header strong { color: #fff; font-weight: 700; }
+
+/* ============================================================
+   SIDEBAR
+   ============================================================ */
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, var(--jfw-navy) 0%, #0F3260 100%) !important;
+    border-right: none !important;
+}
+
+section[data-testid="stSidebar"] * {
+    color: rgba(255, 255, 255, 0.92) !important;
+}
+
+section[data-testid="stSidebar"] h2 {
+    color: #fff !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.01em;
+}
+
+section[data-testid="stSidebar"] .stCaption, section[data-testid="stSidebar"] small {
+    color: rgba(255, 255, 255, 0.55) !important;
+}
+
+section[data-testid="stSidebar"] hr {
+    border-top: 1px solid rgba(255, 255, 255, 0.12) !important;
+    margin: 1.1rem 0 !important;
+}
+
+/* Sidebar radio nav -> pill-style menu */
+section[data-testid="stSidebar"] div[role="radiogroup"] {
+    gap: 0.35rem;
+    display: flex;
+    flex-direction: column;
+}
+
+section[data-testid="stSidebar"] div[role="radiogroup"] label {
+    padding: 0.62rem 0.9rem;
+    border-radius: var(--jfw-radius-sm);
+    transition: background 0.18s ease, transform 0.18s ease;
+    cursor: pointer;
+}
+
+section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
+    background: rgba(255, 255, 255, 0.08);
+    transform: translateX(2px);
+}
+
+section[data-testid="stSidebar"] div[role="radiogroup"] label[data-checked="true"],
+section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {
+    background: linear-gradient(90deg, rgba(76, 154, 255, 0.25), rgba(79, 209, 165, 0.18));
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+
+section[data-testid="stSidebar"] .stButton button {
+    width: 100%;
+    background: linear-gradient(120deg, var(--jfw-blue) 0%, var(--jfw-green) 100%) !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: var(--jfw-radius-sm) !important;
+    font-weight: 600 !important;
+    padding: 0.55rem 1rem !important;
+    box-shadow: var(--jfw-shadow-sm);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+section[data-testid="stSidebar"] .stButton button:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--jfw-shadow-md);
+}
+
+/* ============================================================
+   KPI CARDS
+   ============================================================ */
+.kpi-card {
+    background: linear-gradient(160deg, #FFFFFF 0%, #F7FAFF 100%);
+    border: 1px solid var(--jfw-border);
+    border-radius: var(--jfw-radius-md);
+    padding: 1.15rem 1.3rem;
+    box-shadow: var(--jfw-shadow-sm);
     height: 100%;
-    background: var(--primary);
-    opacity: 0.9;
-}}
+    min-height: 128px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1),
+                box-shadow 0.2s cubic-bezier(0.2, 0.8, 0.2, 1),
+                border-color 0.2s ease;
+    animation: jfw-card-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
 
-.kpi-card:hover,
-[data-testid="stMetric"]:hover {{
-    transform: translateY(-5px);
-    box-shadow: var(--shadow-hover);
-    border-color: rgba(11, 95, 255, 0.25);
-}}
+.kpi-card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3.5px;
+    background: linear-gradient(90deg, var(--jfw-blue) 0%, var(--jfw-green) 100%);
+    opacity: 0.85;
+}
 
-[data-testid="stMetricLabel"] {{
-    font-size: 0.85rem;
+.kpi-card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--jfw-shadow-lg);
+    border-color: rgba(21, 101, 216, 0.25);
+}
+
+.kpi-title {
+    font-size: 0.82rem;
     font-weight: 600;
+    color: var(--jfw-text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: rgba(30, 41, 59, 0.62) !important;
-}}
-
-[data-testid="stMetricValue"] {{
-    font-size: 2.1rem;
-    font-weight: 700;
-    color: var(--text) !important;
-}}
-
-[data-testid="stMetricDelta"] svg {{
-    vertical-align: middle;
-}}
-
-.kpi-card .kpi-title {{
-    font-size: 0.85rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: rgba(30, 41, 59, 0.62);
+    letter-spacing: 0.04em;
     margin-bottom: 0.5rem;
-}}
+}
 
-.kpi-card .kpi-value {{
-    font-size: 2.2rem;
-    font-weight: 700;
-    color: var(--text);
+.kpi-value {
+    font-size: 1.9rem;
+    font-weight: 800;
+    color: var(--jfw-navy);
     line-height: 1.15;
-}}
+    font-variant-numeric: tabular-nums;
+    animation: jfw-count-pop 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
 
-.kpi-card .kpi-unit {{
+.kpi-unit {
     font-size: 0.95rem;
-    font-weight: 500;
-    color: rgba(30, 41, 59, 0.5);
-    margin-left: 0.35rem;
-}}
-
-.kpi-card .kpi-delta-positive {{
-    color: var(--success);
     font-weight: 600;
-    font-size: 0.9rem;
-}}
+    color: var(--jfw-text-muted);
+    margin-left: 0.3rem;
+}
 
-.kpi-card .kpi-delta-negative {{
-    color: var(--danger);
-    font-weight: 600;
-    font-size: 0.9rem;
-}}
-
-/* =====================================================================
-   CHART CONTAINERS
-   ===================================================================== */
-.chart-container,
-[data-testid="stPlotlyChart"] {{
-    background: var(--card);
-    border-radius: var(--radius);
-    padding: 1.25rem 1.25rem 0.5rem 1.25rem;
-    box-shadow: var(--shadow);
-    border: 1px solid rgba(15, 23, 42, 0.05);
-    transition: box-shadow var(--transition-fast), transform var(--transition-fast);
-    margin-bottom: 1.5rem;
-}}
-
-.chart-container:hover,
-[data-testid="stPlotlyChart"]:hover {{
-    box-shadow: var(--shadow-hover);
-    transform: translateY(-2px);
-}}
-
-/* =====================================================================
-   TABLES
-   ===================================================================== */
-[data-testid="stDataFrame"],
-[data-testid="stTable"] {{
-    border-radius: var(--radius);
-    overflow: hidden;
-    box-shadow: var(--shadow);
-    border: 1px solid rgba(15, 23, 42, 0.06);
-}}
-
-[data-testid="stDataFrame"] thead tr th {{
-    background: var(--secondary) !important;
-    color: #ffffff !important;
-    font-weight: 600;
-    text-transform: uppercase;
+.kpi-delta-positive {
+    color: var(--jfw-positive);
+    background: rgba(15, 157, 107, 0.1);
+    padding: 0.16rem 0.55rem;
+    border-radius: 999px;
     font-size: 0.78rem;
-    letter-spacing: 0.5px;
-}}
+    font-weight: 700;
+}
 
-[data-testid="stDataFrame"] tbody tr:hover {{
-    background: rgba(11, 95, 255, 0.06) !important;
-}}
+.kpi-delta-negative {
+    color: var(--jfw-negative);
+    background: rgba(225, 79, 79, 0.1);
+    padding: 0.16rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 700;
+}
 
-/* =====================================================================
-   EXPANDERS
-   ===================================================================== */
-[data-testid="stExpander"] {{
-    background: var(--card);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    border: 1px solid rgba(15, 23, 42, 0.06);
+@keyframes jfw-card-in {
+    from { opacity: 0; transform: translateY(10px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes jfw-count-pop {
+    0%   { opacity: 0; transform: scale(0.85); }
+    60%  { opacity: 1; transform: scale(1.03); }
+    100% { opacity: 1; transform: scale(1); }
+}
+
+/* ============================================================
+   TABS / EXPANDERS / INPUTS
+   ============================================================ */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 0.3rem;
+    background: var(--jfw-surface);
+    padding: 0.35rem;
+    border-radius: var(--jfw-radius-md);
+    box-shadow: var(--jfw-shadow-sm);
+    border: 1px solid var(--jfw-border);
+}
+
+.stTabs [data-baseweb="tab"] {
+    border-radius: var(--jfw-radius-sm) !important;
+    font-weight: 600 !important;
+    color: var(--jfw-text-muted) !important;
+    padding: 0.5rem 1rem !important;
+    transition: all 0.18s ease;
+}
+
+.stTabs [aria-selected="true"] {
+    background: linear-gradient(120deg, var(--jfw-blue) 0%, var(--jfw-green) 100%) !important;
+    color: #fff !important;
+    box-shadow: var(--jfw-shadow-sm);
+}
+
+.streamlit-expanderHeader {
+    background: var(--jfw-surface) !important;
+    border-radius: var(--jfw-radius-sm) !important;
+    border: 1px solid var(--jfw-border) !important;
+    font-weight: 600 !important;
+    color: var(--jfw-navy) !important;
+    box-shadow: var(--jfw-shadow-sm);
+}
+
+.streamlit-expanderContent {
+    background: var(--jfw-surface) !important;
+    border-radius: 0 0 var(--jfw-radius-sm) var(--jfw-radius-sm) !important;
+    border: 1px solid var(--jfw-border) !important;
+    border-top: none !important;
+}
+
+.stTextInput input {
+    border-radius: var(--jfw-radius-sm) !important;
+    border: 1px solid var(--jfw-border) !important;
+    box-shadow: none !important;
+}
+
+.stTextInput input:focus {
+    border-color: var(--jfw-blue) !important;
+    box-shadow: 0 0 0 3px rgba(21, 101, 216, 0.12) !important;
+}
+
+/* Radio (page nav) input dots */
+div[role="radiogroup"] label span:first-child {
+    border-color: rgba(255, 255, 255, 0.5) !important;
+}
+
+/* ============================================================
+   DATAFRAMES / TABLES
+   ============================================================ */
+[data-testid="stDataFrame"] {
+    border-radius: var(--jfw-radius-sm) !important;
     overflow: hidden;
-    margin-bottom: 1rem;
-    transition: box-shadow var(--transition-fast);
-}}
+    border: 1px solid var(--jfw-border) !important;
+    box-shadow: var(--jfw-shadow-sm);
+}
 
-[data-testid="stExpander"]:hover {{
-    box-shadow: var(--shadow-hover);
-}}
+/* ============================================================
+   PLOTLY CONTAINERS
+   ============================================================ */
+[data-testid="stPlotlyChart"] {
+    background: var(--jfw-surface);
+    border-radius: var(--jfw-radius-md);
+    padding: 0.9rem;
+    border: 1px solid var(--jfw-border);
+    box-shadow: var(--jfw-shadow-sm);
+    transition: box-shadow 0.2s ease;
+}
 
-[data-testid="stExpander"] summary {{
-    font-weight: 600;
-    color: var(--text);
-    padding: 0.9rem 1.2rem;
-}}
+[data-testid="stPlotlyChart"]:hover {
+    box-shadow: var(--jfw-shadow-md);
+}
 
-/* =====================================================================
-   BUTTONS
-   ===================================================================== */
-.stButton > button,
-.stDownloadButton > button {{
-    background: linear-gradient(120deg, var(--primary) 0%, var(--secondary) 100%);
-    color: #ffffff;
-    border: none;
-    border-radius: var(--radius);
-    padding: 0.6rem 1.5rem;
-    font-weight: 600;
-    font-size: 0.95rem;
-    letter-spacing: 0.2px;
-    box-shadow: 0 4px 12px rgba(11, 95, 255, 0.25);
-    transition: transform var(--transition-fast), box-shadow var(--transition-fast), opacity var(--transition-fast);
-}}
+/* ============================================================
+   ALERT / INFO / WARNING BOXES
+   ============================================================ */
+.stAlert {
+    border-radius: var(--jfw-radius-sm) !important;
+    box-shadow: var(--jfw-shadow-sm);
+    border: 1px solid var(--jfw-border) !important;
+}
 
-.stButton > button:hover,
-.stDownloadButton > button:hover {{
-    transform: translateY(-2px);
-    box-shadow: 0 8px 20px rgba(11, 95, 255, 0.35);
-    opacity: 0.96;
-}}
-
-.stButton > button:active,
-.stDownloadButton > button:active {{
-    transform: translateY(0);
-}}
-
-/* =====================================================================
-   TABS
-   ===================================================================== */
-[data-testid="stTabs"] [data-baseweb="tab-list"] {{
-    gap: 0.5rem;
-    border-bottom: 2px solid rgba(15, 23, 42, 0.08);
-}}
-
-[data-testid="stTabs"] [data-baseweb="tab"] {{
-    height: 3rem;
-    border-radius: var(--radius) var(--radius) 0 0;
-    font-weight: 600;
-    color: rgba(30, 41, 59, 0.55);
-    transition: color var(--transition-fast), background var(--transition-fast);
-}}
-
-[data-testid="stTabs"] [data-baseweb="tab"]:hover {{
-    color: var(--primary);
-    background: rgba(11, 95, 255, 0.06);
-}}
-
-[data-testid="stTabs"] [aria-selected="true"] {{
-    color: var(--primary) !important;
-    border-bottom: 3px solid var(--primary) !important;
-}}
-
-/* =====================================================================
-   SELECTBOXES / INPUTS
-   ===================================================================== */
-[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
-[data-testid="stMultiSelect"] div[data-baseweb="select"] > div {{
-    background: var(--card);
-    border-radius: var(--radius);
-    border: 1px solid rgba(15, 23, 42, 0.14);
-    box-shadow: none;
-    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-}}
-
-[data-testid="stSelectbox"] div[data-baseweb="select"] > div:hover,
-[data-testid="stMultiSelect"] div[data-baseweb="select"] > div:hover {{
-    border-color: var(--primary);
-}}
-
-[data-testid="stSelectbox"] div[data-baseweb="select"] > div:focus-within,
-[data-testid="stMultiSelect"] div[data-baseweb="select"] > div:focus-within {{
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(11, 95, 255, 0.15);
-}}
-
-/* =====================================================================
+/* ============================================================
    FOOTER
-   ===================================================================== */
-.enterprise-footer {{
-    margin: 3rem -2.5rem 0 -2.5rem;
-    padding: 1.5rem 2.5rem;
-    background: var(--secondary);
-    color: rgba(255, 255, 255, 0.75);
-    font-size: 0.85rem;
+   ============================================================ */
+.enterprise-footer {
     text-align: center;
-    border-radius: var(--radius) var(--radius) 0 0;
-}}
+    color: var(--jfw-text-muted);
+    font-size: 0.8rem;
+    padding: 1.6rem 0 0.6rem 0;
+    margin-top: 2rem;
+    border-top: 1px solid var(--jfw-border);
+    letter-spacing: 0.01em;
+}
 
-.enterprise-footer a {{
-    color: #ffffff;
-    text-decoration: none;
-    font-weight: 600;
-}}
-
-.enterprise-footer a:hover {{
-    text-decoration: underline;
-}}
-
-/* =====================================================================
-   RESPONSIVE LAYOUT
-   ===================================================================== */
-@media (max-width: 1200px) {{
-    [data-testid="stAppViewContainer"] > .main {{
-        padding: 0 1.25rem 2rem 1.25rem;
-    }}
-
-    .enterprise-header,
-    .enterprise-footer {{
-        margin-left: -1.25rem;
-        margin-right: -1.25rem;
-        padding-left: 1.25rem;
-        padding-right: 1.25rem;
-    }}
-}}
-
-@media (max-width: 768px) {{
-    .enterprise-header h1 {{
-        font-size: 1.4rem;
-    }}
-
-    [data-testid="stMetricValue"],
-    .kpi-card .kpi-value {{
-        font-size: 1.6rem;
-    }}
-
-    h2 {{
-        font-size: 1.2rem;
-    }}
-}}
-
-/* =====================================================================
-   REDUCED MOTION
-   ===================================================================== */
-@media (prefers-reduced-motion: reduce) {{
-    * {{
-        transition: none !important;
-        animation: none !important;
-    }}
-}}
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 900px) {
+    .enterprise-header { flex-direction: column; align-items: flex-start; text-align: left; }
+    .enterprise-header > div:last-child { text-align: left !important; }
+    .kpi-value { font-size: 1.5rem; }
+    .block-container { padding-left: 1rem !important; padding-right: 1rem !important; }
+}
 """
