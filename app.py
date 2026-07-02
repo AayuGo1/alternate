@@ -1054,6 +1054,60 @@ def _render_mini_card(title: str, subtitle: str, badge_text: str, badge_class: s
 
 
 # ==========================================================
+# SIDEBAR NAVIGATION + FILTERS
+# ==========================================================
+
+with st.sidebar:
+    st.markdown(f"## {config.ICONS.get('Executive', '')} {config.COMPANY_SHORT_NAME}")
+    st.caption(config.DASHBOARD_SUBTITLE)
+    st.markdown("---")
+
+    page_labels = [f"{config.ICONS.get(_PAGE_ICON_KEYS.get(p, ''), '')}  {p}".strip() for p in config.PAGES]
+    label_to_page = dict(zip(page_labels, config.PAGES))
+    selected_label = st.radio("Navigate", page_labels, label_visibility="collapsed")
+    selected_page = label_to_page[selected_label]
+
+    st.markdown("---")
+
+    # ---- Month Filter (dynamic, driven entirely by the parsed workbook) ----
+    st.markdown("#### 🗓️ Month Filter")
+    _month_options = ["All Months"] + list(available_months)
+
+    if "selected_month_filter" not in st.session_state:
+        st.session_state["selected_month_filter"] = "All Months"
+    elif st.session_state["selected_month_filter"] not in _month_options:
+        # Workbook may have changed (refresh) — fall back gracefully.
+        st.session_state["selected_month_filter"] = "All Months"
+
+    st.selectbox(
+        "Month",
+        options=_month_options,
+        key="selected_month_filter",
+        label_visibility="collapsed",
+    )
+
+    st.markdown("---")
+    st.caption(f"Source: {config.EXCEL_FILENAME}")
+    if st.button("🔄 Refresh Data"):
+        excel_loader.refresh_cache()
+        _load_data.clear()
+        st.rerun()
+
+
+# ==========================================================
+# APPLY MONTH FILTER (global — feeds every page, chart, and table)
+# ==========================================================
+
+_selected_month = st.session_state.get("selected_month_filter", "All Months")
+if _selected_month != "All Months":
+    df = df[df["Month"] == _selected_month]
+
+if df.empty:
+    st.warning(f"No KPI data found for {_selected_month}.")
+    st.stop()
+
+
+# ==========================================================
 # HEADER
 # ==========================================================
 
@@ -1076,28 +1130,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
-
-# ==========================================================
-# SIDEBAR NAVIGATION
-# ==========================================================
-
-with st.sidebar:
-    st.markdown(f"## {config.ICONS.get('Executive', '')} {config.COMPANY_SHORT_NAME}")
-    st.caption(config.DASHBOARD_SUBTITLE)
-    st.markdown("---")
-
-    page_labels = [f"{config.ICONS.get(_PAGE_ICON_KEYS.get(p, ''), '')}  {p}".strip() for p in config.PAGES]
-    label_to_page = dict(zip(page_labels, config.PAGES))
-    selected_label = st.radio("Navigate", page_labels, label_visibility="collapsed")
-    selected_page = label_to_page[selected_label]
-
-    st.markdown("---")
-    st.caption(f"Source: {config.EXCEL_FILENAME}")
-    if st.button("🔄 Refresh Data"):
-        excel_loader.refresh_cache()
-        _load_data.clear()
-        st.rerun()
 
 
 # ==========================================================
