@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Any
 
 import pandas as pd
+import plotly.io as pio
 import streamlit as st
 
 import charts
@@ -41,6 +42,32 @@ st.set_page_config(
 )
 
 st.markdown(f"<style>{styles.load_css()}</style>", unsafe_allow_html=True)
+
+
+# ==========================================================
+# GLOBAL PLOTLY THEME (presentation only — every chart already
+# produced by charts.py automatically inherits this as Plotly's
+# default template; no chart data, traces, or logic are touched).
+# ==========================================================
+
+_JFW_PLOTLY_TEMPLATE = pio.templates["plotly_white"]
+_JFW_PLOTLY_TEMPLATE.layout.update(
+    font=dict(family="Inter, Segoe UI, Helvetica Neue, Arial, sans-serif", color="#14213D", size=13),
+    title=dict(font=dict(size=15, color="#0B2545", family="Inter, Segoe UI, sans-serif"), x=0.01, xanchor="left"),
+    colorway=["#1565D8", "#16A876", "#4C9AFF", "#4FD1A5", "#0B2545", "#0F7A5C", "#8FB8FF", "#8FE0C4"],
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    margin=dict(l=40, r=24, t=48, b=36),
+    legend=dict(
+        orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+        bgcolor="rgba(0,0,0,0)", font=dict(size=12),
+    ),
+    xaxis=dict(gridcolor="rgba(15,35,64,0.07)", zerolinecolor="rgba(15,35,64,0.12)", linecolor="rgba(15,35,64,0.15)"),
+    yaxis=dict(gridcolor="rgba(15,35,64,0.07)", zerolinecolor="rgba(15,35,64,0.12)", linecolor="rgba(15,35,64,0.15)"),
+    hoverlabel=dict(bgcolor="#0B2545", font_color="#FFFFFF", font_size=12, bordercolor="#0B2545"),
+)
+pio.templates["jfw_enterprise"] = _JFW_PLOTLY_TEMPLATE
+pio.templates.default = "jfw_enterprise"
 
 
 # ==========================================================
@@ -121,8 +148,8 @@ def _render_kpi_card(title: str, card: dict[str, Any], icon: str) -> None:
         <div class="kpi-card">
             <div class="kpi-title">{icon} {title}</div>
             <div class="kpi-value">{_fmt_number(current)}<span class="kpi-unit">{unit}</span></div>
-            <div style="margin-top:0.6rem; display:flex; gap:1rem; flex-wrap:wrap;">
-                <span style="font-size:0.82rem; color:rgba(30,41,59,0.55);">
+            <div style="margin-top:0.6rem; display:flex; gap:1rem; flex-wrap:wrap; align-items:center;">
+                <span style="font-size:0.82rem; color:rgba(20,33,61,0.55);">
                     Target: <strong>{_fmt_number(target)}</strong>
                 </span>
                 <span class="{_delta_class(variance)}">Var: {_fmt_percent(variance)}</span>
@@ -1014,10 +1041,10 @@ def _render_mini_card(title: str, subtitle: str, badge_text: str, badge_class: s
     """Small, compact card used for Alerts and Recent Changes panels."""
     st.markdown(
         f"""
-        <div class="kpi-card" style="padding:0.8rem 1rem; margin-bottom:0.6rem;">
-            <div style="font-weight:600; font-size:0.92rem;">{title}</div>
+        <div class="kpi-card" style="padding:0.8rem 1rem; margin-bottom:0.6rem; min-height:auto;">
+            <div style="font-weight:600; font-size:0.92rem; color:var(--jfw-navy, #0B2545);">{title}</div>
             <div style="margin-top:0.35rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
-                <span style="font-size:0.8rem; color:rgba(30,41,59,0.6);">{subtitle}</span>
+                <span style="font-size:0.8rem; color:rgba(20,33,61,0.6);">{subtitle}</span>
                 <span class="{badge_class}">{badge_text}</span>
             </div>
         </div>
@@ -1027,94 +1054,33 @@ def _render_mini_card(title: str, subtitle: str, badge_text: str, badge_class: s
 
 
 # ==========================================================
-# ENTERPRISE FILTERS — dynamic, no hardcoded options
+# HEADER
 # ==========================================================
-#
-# A filter is shown ONLY if its column actually exists in the parsed
-# DataFrame — Plant / Business Unit / Financial Year are optional
-# depending on what the workbook contains this month, while Month /
-# Category / Subcategory are effectively always present. Options for every
-# filter are read straight from the data (deduplicated, sorted — Month
-# instead follows the workbook's own chronological order). Nothing here is
-# a fixed list of values; the only thing fixed is which column NAMES are
-# eligible to become a filter.
 
-_ENTERPRISE_FILTER_COLUMNS: list[str] = [
-    "Financial Year",
-    "Month",
-    "Plant",
-    "Business Unit",
-    "Category",
-    "Subcategory",
-]
+latest_month_overall = metrics.get_latest_month(df)
+total_kpis = df["Metric"].nunique()
+last_refresh = datetime.now().strftime(f"{config.DATE_FORMAT} %H:%M")
 
-
-def _get_available_filter_options(
-    source_df: pd.DataFrame, column: str, ordered_months: list[str] | None = None
-) -> list[str]:
-    """Return the distinct, non-null values for a column, or [] if the column isn't present."""
-    if column not in source_df.columns:
-        return []
-    values = source_df[column].dropna()
-    if values.empty:
-        return []
-    unique_values = list(dict.fromkeys(str(v) for v in values))
-
-    if column == "Month" and ordered_months:
-        # Preserve the workbook's own chronological month order instead of alpha-sorting.
-        ordered_present = [m for m in ordered_months if m in unique_values]
-        remaining = [m for m in unique_values if m not in ordered_present]
-        return ordered_present + remaining
-
-    return sorted(unique_values)
-
-
-def _render_enterprise_filters(source_df: pd.DataFrame, ordered_months: list[str]) -> dict[str, list[str]]:
-    """
-    Render one multiselect per filterable column that is actually present in
-    the data, and return the user's current selections (empty list for a
-    column means "no filter applied" -> show everything for that column).
-    """
-    selections: dict[str, list[str]] = {}
-    any_filter_rendered = False
-
-    for column in _ENTERPRISE_FILTER_COLUMNS:
-        options = _get_available_filter_options(
-            source_df, column, ordered_months if column == "Month" else None
-        )
-        if not options:
-            continue
-        any_filter_rendered = True
-        selections[column] = st.multiselect(
-            column,
-            options,
-            default=[],
-            key=f"filter_{column}",
-            placeholder=f"All {column}s",
-        )
-
-    if not any_filter_rendered:
-        st.caption("No filterable dimensions detected in the current workbook.")
-
-    return selections
-
-
-def _apply_enterprise_filters(source_df: pd.DataFrame, selections: dict[str, list[str]]) -> pd.DataFrame:
-    """Intersect all active filter selections against the DataFrame."""
-    filtered = source_df
-    for column, selected_values in selections.items():
-        if selected_values:
-            filtered = filtered[filtered[column].astype(str).isin(selected_values)]
-    return filtered
+st.markdown(
+    f"""
+    <div class="enterprise-header">
+        <div>
+            <h1>{config.COMPANY_NAME}</h1>
+            <p>{config.DASHBOARD_TITLE} · {config.DASHBOARD_SUBTITLE}</p>
+        </div>
+        <div style="text-align:right;">
+            <p>Reporting Month: <strong>{latest_month_overall or "—"}</strong></p>
+            <p>Total KPIs: <strong>{total_kpis}</strong> &nbsp;|&nbsp; Last Refresh: <strong>{last_refresh}</strong></p>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 # ==========================================================
-# SIDEBAR NAVIGATION + FILTERS
+# SIDEBAR NAVIGATION
 # ==========================================================
-# Rendered before the header/pages so every downstream card, chart, table,
-# and page reflects the active filters on this same run (Streamlit reruns
-# the whole script on any widget change, so this is enough for
-# "everything reacts immediately" — no manual refresh wiring needed).
 
 with st.sidebar:
     st.markdown(f"## {config.ICONS.get('Executive', '')} {config.COMPANY_SHORT_NAME}")
@@ -1127,61 +1093,12 @@ with st.sidebar:
     selected_page = label_to_page[selected_label]
 
     st.markdown("---")
-    st.markdown("### 🔍 Filters")
-    filter_selections = _render_enterprise_filters(df, available_months)
-
-    if any(filter_selections.values()):
-        if st.button("✖️ Clear Filters", use_container_width=True):
-            for column in filter_selections:
-                st.session_state.pop(f"filter_{column}", None)
-            st.rerun()
-
-    st.markdown("---")
     st.caption(f"Source: {config.EXCEL_FILENAME}")
     if st.button("🔄 Refresh Data"):
         excel_loader.refresh_cache()
         _load_data.clear()
         st.rerun()
 
-
-# Apply filters globally: every helper/page function below reads the module-
-# level `df` / `available_months` names at call time, so reassigning them
-# here — before any card, chart, table, or page is rendered — makes the
-# entire rest of the script (Executive Overview, Energy, Water, Waste)
-# operate on the filtered data with no further changes needed anywhere else.
-df = _apply_enterprise_filters(df, filter_selections)
-available_months = [m for m in available_months if m in set(str(v) for v in df["Month"].dropna().unique())]
-
-if df.empty:
-    st.warning("No data matches the selected filters. Adjust or clear filters in the sidebar.")
-    st.stop()
-
-
-# ==========================================================
-# HEADER
-# ==========================================================
-
-latest_month_overall = metrics.get_latest_month(df)
-total_kpis = df["Metric"].nunique()
-last_refresh = datetime.now().strftime(f"{config.DATE_FORMAT} %H:%M")
-active_filter_count = sum(1 for values in filter_selections.values() if values)
-filter_caption = f"Filters active: <strong>{active_filter_count}</strong>" if active_filter_count else "No filters applied"
-
-st.markdown(
-    f"""
-    <div class="enterprise-header">
-        <div>
-            <h1>{config.COMPANY_NAME}</h1>
-            <p>{config.DASHBOARD_TITLE} · {config.DASHBOARD_SUBTITLE}</p>
-        </div>
-        <div style="text-align:right;">
-            <p>Reporting Month: <strong>{latest_month_overall or "—"}</strong></p>
-            <p>Total KPIs: <strong>{total_kpis}</strong> &nbsp;|&nbsp; Last Refresh: <strong>{last_refresh}</strong> &nbsp;|&nbsp; {filter_caption}</p>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
 
 # ==========================================================
 # EXECUTIVE OVERVIEW (management dashboard)
