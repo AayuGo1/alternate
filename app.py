@@ -252,6 +252,198 @@ def _render_category_page(category: str) -> None:
 
 
 # ==========================================================
+# ENERGY PAGE — dedicated dynamic dashboard
+# ==========================================================
+#
+# Energy gets its own layout (tabs instead of stacked expander sections)
+# and its own grouping logic: rather than relying solely on the workbook's
+# Subcategory column, every Energy metric is classified into a section by
+# inspecting its own name (and Subcategory, when present) for keywords —
+# so a brand-new metric added to the workbook next month is automatically
+# picked up and bucketed without any code change here. No metric name,
+# unit, category, or sheet name is ever hardcoded; only the classification
+# keywords (generic energy-domain vocabulary) are fixed.
+
+_ENERGY_BUCKET_ORDER: list[str] = [
+    "Direct Energy",
+    "Indirect Energy",
+    "Energy KPI",
+    "Energy Intensity",
+    "Renewable Energy",
+    "Other Energy Metrics",
+]
+
+_ENERGY_BUCKET_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "Renewable Energy": ("renewable", "solar", "wind", "green power", "biomass"),
+    "Energy Intensity": (
+        "intensity", "per tonne", "per unit", "per production",
+        "specific energy", "normalized", "normalised",
+    ),
+    "Energy KPI": ("kpi",),
+    # NOTE: "indirect" must be checked before "direct" — "indirect" contains
+    # "direct" as a substring, so direct-only matching would misclassify it.
+    "Indirect Energy": ("indirect",),
+    "Direct Energy": ("direct",),
+}
+
+
+def _classify_energy_metric(subcategory: Any, metric_name: str) -> str:
+    """
+    Infer which Energy section a metric belongs to, using only text already
+    present in the workbook (its own name and, if available, its Subcategory).
+    Falls back to 'Other Energy Metrics' when nothing matches.
+    """
+    combined_text = f"{subcategory if pd.notna(subcategory) else ''} {metric_name}".lower()
+
+    for bucket_name in ("Renewable Energy", "Energy Intensity", "Energy KPI", "Indirect Energy", "Direct Energy"):
+        if any(keyword in combined_text for keyword in _ENERGY_BUCKET_KEYWORDS[bucket_name]):
+            return bucket_name
+
+    return "Other Energy Metrics"
+
+
+def _build_metric_mom_df(metric_df: pd.DataFrame, ordered_months: list[str]) -> pd.DataFrame:
+    """
+    Build a Month-over-Month percentage-change series for a single metric,
+    across every month present, reusing metrics.calculate_mom() for each
+    consecutive pair rather than inventing a new formula here. The result
+    is shaped so it can be rendered with the existing charts.bar_chart().
+    """
+    if metric_df.empty:
+        return pd.DataFrame(columns=["Metric", "Month", "Value", "Unit", "Target"])
+
+    metric_name = str(metric_df["Metric"].iloc[0])
+    months_present = [m for m in ordered_months if m in set(metric_df["Month"])]
+    monthly_totals = metric_df.groupby("Month")["Value"].apply(
+        lambda s: pd.to_numeric(s, errors="coerce").sum(min_count=1)
+    )
+
+    records: list[dict[str, Any]] = []
+    previous_value: float | None = None
+    for month_label in months_present:
+        raw_value = monthly_totals.get(month_label)
+        current_value = None if pd.isna(raw_value) else float(raw_value)
+        mom_value = metrics.calculate_mom(current_value, previous_value)
+        records.append(
+            {
+                "Metric": metric_name,
+                "Month": month_label,
+                "Value": mom_value,
+                "Unit": "%",
+                "Target": None,
+            }
+        )
+        previous_value = current_value
+
+    return pd.DataFrame(records, columns=["Metric", "Month", "Value", "Unit", "Target"])
+
+
+def _render_energy_page(category_df: pd.DataFrame, category: str) -> None:
+    """Render the dedicated, dynamically-grouped Energy dashboard."""
+    if category_df.empty:
+        st.info(f"No data found for {category} in the current workbook.")
+        return
+
+    metric_names = list(dict.fromkeys(str(m) for m in category_df["Metric"].tolist() if pd.notna(m)))
+
+    # First non-null Subcategory seen for each Metric, used only as extra
+    # classification context (never displayed as a hardcoded label).
+    metric_subcategory = (
+        category_df.dropna(subset=["Metric"])
+        .groupby("Metric")["Subcategory"]
+        .agg(lambda s: next((v for v in s if pd.notna(v)), None))
+    )
+
+    buckets: dict[str, list[str]] = {name: [] for name in _ENERGY_BUCKET_ORDER}
+    for metric_name in metric_names:
+        bucket_name = _classify_energy_metric(metric_subcategory.get(metric_name), metric_name)
+        buckets[bucket_name].append(metric_name)
+
+    latest_month = metrics.get_latest_month(category_df)
+    previous_month = metrics.get_previous_month(category_df)
+
+    # Overall Energy snapshot, reusing metrics.get_summary_cards() as-is.
+    overall_summary = metrics.get_summary_cards(category_df)
+    if overall_summary:
+        _, overall_card = next(iter(overall_summary.items()))
+        st.markdown("#### Overall Energy Snapshot")
+        _render_kpi_card(f"{category} — All Sources Combined", overall_card, config.ICONS.get(category, ""))
+
+    active_buckets = [name for name in _ENERGY_BUCKET_ORDER if buckets.get(name)]
+    if not active_buckets:
+        st.info("No Energy metrics could be detected in the current workbook.")
+        return
+
+    tabs = st.tabs(active_buckets)
+    for tab, bucket_name in zip(tabs, active_buckets):
+        with tab:
+            bucket_metrics = buckets[bucket_name]
+            bucket_df = category_df[category_df["Metric"].isin(bucket_metrics)]
+
+            metric_word = "metric" if len(bucket_metrics) == 1 else "metrics"
+            st.markdown(f"##### {bucket_name} · {len(bucket_metrics)} {metric_word}")
+
+            # One KPI card per discovered metric in this section.
+            cols = st.columns(min(config.KPI_COLUMNS, max(len(bucket_metrics), 1)))
+            for idx, metric_name in enumerate(bucket_metrics):
+                metric_df = bucket_df[bucket_df["Metric"] == metric_name]
+                snapshot = _metric_snapshot(metric_df, latest_month, previous_month)
+                with cols[idx % len(cols)]:
+                    _render_kpi_card(metric_name, snapshot, "⚡")
+
+            chart_col1, chart_col2 = st.columns(2)
+            with chart_col1:
+                st.plotly_chart(
+                    charts.line_chart(bucket_df, f"{bucket_name} — Monthly Trend"),
+                    use_container_width=True,
+                )
+            with chart_col2:
+                st.plotly_chart(
+                    charts.target_vs_actual_chart(bucket_df, f"{bucket_name} — Target vs Actual"),
+                    use_container_width=True,
+                )
+
+            mom_frames = [
+                _build_metric_mom_df(bucket_df[bucket_df["Metric"] == metric_name], available_months)
+                for metric_name in bucket_metrics
+            ]
+            mom_df = (
+                pd.concat(mom_frames, ignore_index=True)
+                if mom_frames
+                else pd.DataFrame(columns=["Metric", "Month", "Value", "Unit", "Target"])
+            )
+            st.plotly_chart(
+                charts.bar_chart(mom_df, f"{bucket_name} — MoM % Change"),
+                use_container_width=True,
+            )
+
+            # Multiple sources -> share-of-total pie. Exactly one source ->
+            # the Monthly Trend line above already tells that story, per spec.
+            if len(bucket_metrics) > 1:
+                st.plotly_chart(
+                    charts.donut_chart(bucket_df, f"{bucket_name} — Source Distribution"),
+                    use_container_width=True,
+                )
+
+            with st.expander(f"📋 {bucket_name} — Data Table", expanded=False):
+                search_term = st.text_input(
+                    "Search metric",
+                    key=f"energy_search_{bucket_name}",
+                    placeholder="Filter by metric name...",
+                )
+                table_df = bucket_df[["Metric", "Month", "Value", "Unit", "Target"]].copy()
+                table_df["_MonthSort"] = _month_sort_categorical(table_df["Month"], available_months)
+                table_df = table_df.sort_values(["Metric", "_MonthSort"]).drop(columns="_MonthSort")
+
+                if search_term:
+                    table_df = table_df[table_df["Metric"].str.contains(search_term, case=False, na=False)]
+
+                st.dataframe(
+                    table_df, use_container_width=True, height=config.DEFAULT_TABLE_HEIGHT, hide_index=True
+                )
+
+
+# ==========================================================
 # HEADER
 # ==========================================================
 
@@ -360,10 +552,19 @@ if selected_page == "Executive Overview":
 
 
 # ==========================================================
-# ENERGY / WATER / WASTE PAGES
+# ENERGY PAGE (dedicated dynamic dashboard)
 # ==========================================================
 
-elif selected_page in ("Energy", "Water", "Waste"):
+elif selected_page == "Energy":
+    st.markdown(f"## {config.ICONS.get(selected_page, '')} {selected_page}")
+    _render_energy_page(metrics.filter_category(df, selected_page), selected_page)
+
+
+# ==========================================================
+# WATER / WASTE PAGES (unchanged)
+# ==========================================================
+
+elif selected_page in ("Water", "Waste"):
     st.markdown(f"## {config.ICONS.get(selected_page, '')} {selected_page}")
     _render_category_page(selected_page)
 
